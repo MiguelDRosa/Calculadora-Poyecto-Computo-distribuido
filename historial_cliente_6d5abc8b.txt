@@ -1,4 +1,0 @@
-Operación solicitada: 6d5abc8b,MULTIPLICACION,5,6
-Operación respondida: RESULTADO,30
-Operación solicitada: 6d5abc8b,MULTIPLICACION,309,2
-Operación respondida: RESULTADO,618

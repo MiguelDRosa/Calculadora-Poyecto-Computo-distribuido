@@ -1,102 +1,176 @@
-
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
+ 
 public class Middleware {
-    private static final int PUERTO_CLIENTES = 5000;
-    private static final int PUERTO_SERVIDOR_CALC = 6000; 
+    private static final int PUERTO_ESCUCHA = 5000;
     private static final String ARCHIVO_HISTORIAL = "historial_middleware.txt";
+
+    
+    private static final List<PrintWriter> clientesConectados = new CopyOnWriteArrayList<>();
+    private static final List<PrintWriter> servidoresConectados = new CopyOnWriteArrayList<>();
+
+    private static final AtomicInteger contadorPeticiones = new AtomicInteger(0);
 
     public static void main(String[] args) {
         System.out.println("==========================================");
         System.out.println("   MIDDLEWARE   ");
-        System.out.println("   Escuchando clientes en puerto " + PUERTO_CLIENTES);
+        System.out.println("   Escuchando clientes y servidores en puerto " + PUERTO_ESCUCHA);
         System.out.println("==========================================");
 
-        try (ServerSocket serverSocket = new ServerSocket(PUERTO_CLIENTES)) {
+        try (ServerSocket serverSocket = new ServerSocket(PUERTO_ESCUCHA)) {
             while (true) {
-              
-                Socket socketCliente = serverSocket.accept();
-                new Thread(new ManejadorCliente(socketCliente)).start();
+                Socket socket = serverSocket.accept();
+                new Thread(new ManejadorConexion(socket)).start();
             }
         } catch (IOException e) {
             System.err.println("Error en el servidor Middleware: " + e.getMessage());
         }
     }
 
-    private static class ManejadorCliente implements Runnable {
-        private Socket socketCliente;
+    private static class ManejadorConexion implements Runnable {
+        private final Socket socket;
+        private PrintWriter salida;
+        private boolean esServidor = false;
+        private String idPropio = "?";
 
-        public ManejadorCliente(Socket socket) {
-            this.socketCliente = socket;
+        public ManejadorConexion(Socket socket) {
+            this.socket = socket;
         }
 
         @Override
         public void run() {
-            try (
-                BufferedReader entradaCliente = new BufferedReader(new InputStreamReader(socketCliente.getInputStream()));
-                PrintWriter salidaCliente = new PrintWriter(socketCliente.getOutputStream(), true)
-            ) {
-                String mensajeCliente;
-                while ((mensajeCliente = entradaCliente.readLine()) != null) {
-              
-                    String[] partes = mensajeCliente.split(",");
+            try (BufferedReader entrada = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+                salida = new PrintWriter(socket.getOutputStream(), true);
+
+                String primeraLinea = entrada.readLine();
+                if (primeraLinea == null) return;
+
+                String[] primerasPartes = primeraLinea.split(",");
+
+                if (primerasPartes.length == 2 && primerasPartes[0].equals("SERVIDOR")) {
                     
-                    if (partes.length == 4) {
-                        String idCliente = partes[0];
-                        String operacion = partes[1];
-                        String num1 = partes[2];
-                        String num2 = partes[3];
+                    esServidor = true;
+                    idPropio = primerasPartes[1];
+                    servidoresConectados.add(salida);
+                    System.out.println("\n[CONEXIÓN] Servidor registrado -> ID: " + idPropio
+                            + " | Total servidores: " + servidoresConectados.size());
+                    guardarEnHistorial("CONEXIÓN [Servidor " + idPropio + "]: registrado en el middleware.");
 
-           
-                        if (operacion.equals("DESCONECTAR")) {
-                            System.out.println("\n[DESCONEXIÓN] Cliente ID: " + idCliente + " ha cerrado sesión de forma segura.");
-                            guardarEnHistorial("DESCONEXIÓN [" + idCliente + "]: El cliente cerro la aplicación.");
-                            break; 
-                        }
+                    manejarLineasServidor(entrada);
 
-                        System.out.println("\n[PETICIÓN RECIBIDA]");
-                  
+                } else {
+                   
+                    esServidor = false;
+                    clientesConectados.add(salida);
+                    System.out.println("\n[CONEXIÓN] Cliente conectado. Total clientes: " + clientesConectados.size());
 
-                        System.out.println("\n[PETICION RECIBIDA]");
-                        System.out.println(" > Cliente ID : " + idCliente);
-                        System.out.println(" > Operacion  : " + num1 + " " + operacion + " " + num2);
-
-                        guardarEnHistorial("RECIBIDO [" + idCliente + "]: " + operacion + " (" + num1 + ", " + num2 + ")");
-
-                  
-                        String resultado = procesarConServidorCalculo(operacion + "," + num1 + "," + num2);
-
-                        if (resultado != null) {
-                            System.out.println(" > Respuesta devuelta a " + idCliente + ": " + resultado);
-                            salidaCliente.println("RESULTADO," + resultado);
-                            guardarEnHistorial("RESPUESTA [" + idCliente + "]: " + resultado);
-                        } else {
-                            salidaCliente.println("RESULTADO,ERROR_SERVIDOR");
-                            guardarEnHistorial("ERROR [" + idCliente + "]: Servidor no disponible");
-                        }
+                    
+                    boolean continuar = procesarLineaCliente(primeraLinea);
+                    if (continuar) {
+                        manejarLineasCliente(entrada);
                     }
                 }
+
             } catch (IOException e) {
-                System.out.println("Un cliente se ha desconectado.");
+                System.out.println("Conexión finalizada: " + e.getMessage());
+            } finally {
+                if (esServidor) {
+                    servidoresConectados.remove(salida);
+                    System.out.println("\n[DESCONEXIÓN] Servidor " + idPropio + " se ha desconectado.");
+                    guardarEnHistorial("DESCONEXIÓN [Servidor " + idPropio + "]");
+                } else {
+                    clientesConectados.remove(salida);
+                }
             }
         }
 
+        private void manejarLineasCliente(BufferedReader entrada) throws IOException {
+            String linea;
+            while ((linea = entrada.readLine()) != null) {
+                boolean continuar = procesarLineaCliente(linea);
+                if (!continuar) break;
+            }
+        }
 
-        private String procesarConServidorCalculo(String peticion) {
-            try (
-                Socket socketServidor = new Socket("localhost", PUERTO_SERVIDOR_CALC);
-                PrintWriter salidaServidor = new PrintWriter(socketServidor.getOutputStream(), true);
-                BufferedReader entradaServidor = new BufferedReader(new InputStreamReader(socketServidor.getInputStream()))
-            ) {
-                salidaServidor.println(peticion);
-                return entradaServidor.readLine();
-            } catch (IOException e) {
-                System.err.println(" ERROR: No se pudo conectar con el servidor (Puerto " + PUERTO_SERVIDOR_CALC + ")");
-                return null;
+       
+        private boolean procesarLineaCliente(String mensajeCliente) {
+            String[] partes = mensajeCliente.split(",");
+            if (partes.length != 4) return true;
+
+            String idCliente = partes[0];
+            String operacion = partes[1];
+            String num1 = partes[2];
+            String num2 = partes[3];
+
+            if (operacion.equals("DESCONECTAR")) {
+                System.out.println("\n[DESCONEXIÓN] Cliente ID: " + idCliente + " ha cerrado sesión de forma segura.");
+                guardarEnHistorial("DESCONEXIÓN [" + idCliente + "]: El cliente cerró la aplicación.");
+                return false;
+            }
+
+            String idPeticion = "P" + contadorPeticiones.incrementAndGet();
+
+            System.out.println("\n[PETICIÓN RECIBIDA]");
+            System.out.println(" > ID Petición : " + idPeticion);
+            System.out.println(" > Cliente ID  : " + idCliente);
+            System.out.println(" > Operación   : " + num1 + " " + operacion + " " + num2);
+
+            guardarEnHistorial("RECIBIDO [" + idCliente + "] (" + idPeticion + "): " + operacion
+                    + " (" + num1 + ", " + num2 + ")");
+
+            
+            String mensajeServidores = idPeticion + "," + idCliente + "," + operacion + "," + num1 + "," + num2;
+
+            if (servidoresConectados.isEmpty()) {
+                System.out.println(" ! No hay servidores conectados.");
+                broadcastAClientes("RESULTADO,ERROR_SIN_SERVIDORES," + idPeticion + "," + idCliente + ",,");
+                guardarEnHistorial("ERROR (" + idPeticion + "): No hay servidores conectados.");
+            } else {
+                for (PrintWriter salidaServidor : servidoresConectados) {
+                    salidaServidor.println(mensajeServidores);
+                }
+                System.out.println(" > Petición reenviada a " + servidoresConectados.size() + " servidor(es).");
+            }
+
+            return true;
+        }
+
+        private void manejarLineasServidor(BufferedReader entrada) throws IOException {
+            String linea;
+            while ((linea = entrada.readLine()) != null) {
+               
+                String[] partes = linea.split(",");
+                if (partes.length != 5) continue;
+
+                String idPeticion = partes[0];
+                String idCliente = partes[1];
+                String idServidor = partes[2];
+                String operacion = partes[3];
+                String resultado = partes[4];
+
+                System.out.println("\n[RESULTADO RECIBIDO de Servidor " + idServidor + "]");
+                System.out.println(" > ID Petición : " + idPeticion);
+                System.out.println(" > Resultado   : " + resultado);
+
+                guardarEnHistorial("RESPUESTA [Servidor " + idServidor + "] (" + idPeticion + "): " + resultado);
+
+                
+                String mensajeClientes = "RESULTADO," + resultado + "," + idPeticion + "," + idCliente
+                        + "," + idServidor + "," + operacion;
+                broadcastAClientes(mensajeClientes);
+            }
+        }
+
+        private void broadcastAClientes(String mensaje) {
+            for (PrintWriter salidaCliente : clientesConectados) {
+                salidaCliente.println(mensaje);
             }
         }
     }
@@ -107,7 +181,7 @@ public class Middleware {
              PrintWriter pw = new PrintWriter(fw)) {
             pw.println("[" + fechaHora + "] " + evento);
         } catch (IOException e) {
-            System.err.println("error al escribir el historial: " + e.getMessage());
+            System.err.println("Error al escribir el historial: " + e.getMessage());
         }
     }
 }

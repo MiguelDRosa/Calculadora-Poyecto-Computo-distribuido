@@ -13,12 +13,12 @@ import java.util.UUID;
 public class Cliente {
     private static PrintWriter out;
     private static JTextField display;
-    
+
     private static final String ID_CLIENTE = UUID.randomUUID().toString().substring(0, 8);
     private static final String archivoHistorial = "historial_cliente_" + ID_CLIENTE + ".txt";
 
     private static ArrayList<JButton> listaBotones = new ArrayList<>();
-    
+
     private static String num1 = "";
     private static String num2 = "";
     private static String operador = "";
@@ -34,8 +34,7 @@ public class Cliente {
 
     private static void crearInterfazGrafica() {
         JFrame frame = new JFrame("Cliente: " + ID_CLIENTE);
-        
-       
+
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         frame.addWindowListener(new WindowAdapter() {
             @Override
@@ -76,8 +75,8 @@ public class Cliente {
             btn.setFont(new Font("Segoe UI", Font.BOLD, 22));
             btn.setFocusPainted(false);
             btn.setBorder(BorderFactory.createEmptyBorder());
-            
-            listaBotones.add(btn); 
+
+            listaBotones.add(btn);
 
             if (texto.matches("[0-9]")) {
                 btn.setBackground(new Color(52, 73, 94));
@@ -153,33 +152,45 @@ public class Cliente {
 
                 String respuesta;
                 while ((respuesta = in.readLine()) != null) {
-                    String[] partes = respuesta.split(",");
+           
+                    String[] partes = respuesta.split(",", -1);
                     if (partes.length >= 2 && partes[0].equals("RESULTADO")) {
                         String valorFinal = partes[1];
-                        SwingUtilities.invokeLater(() -> {
-                            display.setText(valorFinal);
-                            num1 = valorFinal; 
-                            num2 = ""; operador = ""; escribiendoNum2 = false;
-                            cambiarEstadoBotones(true); 
-                        });
-                        guardarHistorial("Operación respondida: " + respuesta);
+                        String idPeticion = partes.length > 2 ? partes[2] : "";
+                        String idClienteDestino = partes.length > 3 ? partes[3] : "";
+                        String idServidorOrigen = partes.length > 4 ? partes[4] : "";
+
+                        boolean esMiPeticion = idClienteDestino.equals(ID_CLIENTE);
+
+                        if (esMiPeticion) {
+                            SwingUtilities.invokeLater(() -> {
+                                display.setText(valorFinal);
+                                num1 = valorFinal;
+                                num2 = ""; operador = ""; escribiendoNum2 = false;
+                                cambiarEstadoBotones(true);
+                            });
+                        }
+
+                        guardarHistorial("Resultado recibido (peticion=" + idPeticion
+                                + ", servidor=" + idServidorOrigen
+                                + ", " + (esMiPeticion ? "PROPIA" : "de otro cliente") + "): " + valorFinal);
                     }
                 }
             } catch (ConnectException e) {
                 SwingUtilities.invokeLater(() -> {
-                    JOptionPane.showMessageDialog(null, 
-                        "No se pudo conectar al Middlewar, Asegúrate de que el servidor esté encendido.", 
+                    JOptionPane.showMessageDialog(null,
+                        "No se pudo conectar al Middleware. Asegúrate de que esté encendido.",
                         "Error de Red", JOptionPane.ERROR_MESSAGE);
                 });
             } catch (IOException e) {
-                
+                // Conexión cerrada
             }
         }).start();
     }
 
     private static void enviarOperacion() {
         if (num1.isEmpty() || num2.isEmpty() || operador.isEmpty()) return;
-        
+
         if (!conectado) {
             JOptionPane.showMessageDialog(null, "No estas conectado al servidor.");
             return;
@@ -194,12 +205,11 @@ public class Cliente {
         String mensaje = ID_CLIENTE + "," + operador + "," + num1 + "," + num2;
         out.println(mensaje);
         guardarHistorial("Operacion solicitada: " + mensaje);
-        
+
         display.setText("Calculando...");
-        cambiarEstadoBotones(false); 
+        cambiarEstadoBotones(false);
     }
 
-    // NUEVA FUNCIÓN DE DESCONEXIÓN
     private static void desconectarYSalir() {
         if (conectado && out != null) {
             String mensajeDespedida = ID_CLIENTE + ",DESCONECTAR,0,0";
@@ -219,6 +229,6 @@ public class Cliente {
         try (FileWriter fw = new FileWriter(archivoHistorial, true);
              PrintWriter pw = new PrintWriter(fw)) {
             pw.println(registro);
-        } catch (IOException e) {}
+        } catch (IOException e) { }
     }
 }

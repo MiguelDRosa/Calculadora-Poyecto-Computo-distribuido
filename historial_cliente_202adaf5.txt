@@ -1,3 +1,0 @@
-Operación solicitada: 202adaf5,DIVISION,8,2
-Operación respondida: RESULTADO,4
-Desconectando cliente del servidor...
