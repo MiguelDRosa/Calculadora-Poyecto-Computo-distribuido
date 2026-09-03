@@ -1,0 +1,2 @@
+Operación solicitada: e0afc021,MULTIPLICACION,9,5
+Operación respondida: RESULTADO,45
